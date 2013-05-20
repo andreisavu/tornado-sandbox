@@ -24,6 +24,8 @@ node default {
     stage => 'system'
   }
 
+  class { 'squid::server': }
+
   package { 'tornado':
     ensure   => '3.0.1',
     provider => pip
