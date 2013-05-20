@@ -1,36 +1,34 @@
 
-from tornado.ioloop import IOLoop
+import json
+
+from tornado.ioloop import IOLoop, PeriodicCallback
+
 from tornado.httpclient import AsyncHTTPClient
 from tornado.httpclient import HTTPRequest
 
-io = IOLoop.instance()
-io.make_current()
+class RequestHandlerWithStats(object):
+  """ Receive the response, parse the json and continue """
 
-AsyncHTTPClient.configure("tornado.curl_httpclient.CurlAsyncHTTPClient")
-client = AsyncHTTPClient(max_clients = 300)
+  def __init__(self):
+    self._count = 0
+    self._errors = 0
 
-batch_size = 10000
-count = 0
-errors = 0
+  def __call__(self, response):
+    if response.error:
+      self._errors += 1
+      response.rethrow() # propagate error - should but message back
 
-def handle_request(response):
-  global io, client, count, errors, batch_size
+    results = json.loads(response.body)
+    print "%s: %r" % (self._count, len(results['data']))
 
-  if response.error:
-    print "Error: %rn" % response
-    errors += 1
-  else:
-    print "%s: %r" % (count, response)
+    self._count += 1
 
-  count += 1
-  if count == batch_size:
-    print "Error count: %d" % errors
-    client.close()  # we should probably close & re-create the client for each batch
-    io.stop()    
+  def __repr__(self):
+    return "<RequestHandler processed=%s errors=%s>" % (self._count, self._errors)
 
-url = 'http://localhost:8080/'
+URL = 'http://localhost:8080/'
 
-options = {
+OPTIONS = {
   'proxy_host': 'localhost',
   'proxy_port': 3128,
   'connect_timeout': 3,
@@ -41,8 +39,21 @@ options = {
   'validate_cert': False
 }
 
-for _ in range(0, batch_size):
-  client.fetch(HTTPRequest(url, **options), handle_request)  
+AsyncHTTPClient.configure("tornado.curl_httpclient.CurlAsyncHTTPClient")
+client = AsyncHTTPClient(max_clients = 300)
+# max_clients ~ number of proxy servers
 
-io.start()
+handler = RequestHandlerWithStats()
+
+def producer():
+  global client, URL, OPTIONS, handler
+
+  print "Adding a new batch to the queue ..."
+  for _ in xrange(0, 1000):
+    client.fetch(HTTPRequest(URL, **OPTIONS), handler)
+
+PeriodicCallback(producer, 10000).start()
+
+IOLoop().instance().start()
+
 
